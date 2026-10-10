@@ -58,7 +58,7 @@ test('a scoped package declares public access, or npm refuses the publish with E
   assert.equal(manifest.publishConfig?.access, 'public')
 })
 
-test('the peer range names the subject of the probe, and every other harness package is a dev dependency', () => {
+test('the peer range names the subject of the probe, and the harnesses stay out of the package', () => {
   // `probe-lines` reads its lines back out of this range, so a subject that moves
   // without the script moving would silently shrink the claim.
   assert.ok(manifest.peerDependencies['@deepseek-ai/dsh-subprocess'], 'the seam this plugin shadows is a peer')
@@ -66,12 +66,13 @@ test('the peer range names the subject of the probe, and every other harness pac
     assert.ok(name.startsWith('@deepseek-ai/'), `${name} is not a harness package`)
     assert.ok(range.length > 0)
   }
-  // The two harnesses are named by the manifest and exist on disk. The script
-  // entries themselves are read tolerantly: `probe-lines` rewrites `scripts` in the
-  // scratch tree it tests, so a strict assertion here would fail the probe for a
-  // reason that has nothing to do with the line.
+  // The two development harnesses are named by the manifest and are *not* shipped:
+  // `files` covers none of `scripts/`. Asserting the absence is the point — an
+  // installed package has no test directory either, so a suite that reached for a
+  // published harness would be unrunnable exactly where it matters.
   assert.match(manifest.scripts['test:probe-lines'] ?? 'probe-lines.mjs', /probe-lines\.mjs/)
   assert.match(manifest.scripts['test:inject'] ?? 'inject-defects.mjs', /inject-defects\.mjs/)
-  assert.ok(existsSync(join(ROOT, 'scripts', 'probe-lines.mjs')), 'the script the manifest names exists')
-  assert.ok(existsSync(join(ROOT, 'scripts', 'inject-defects.mjs')), 'and so does the mutation harness')
+  for (const script of ['scripts/probe-lines.mjs', 'scripts/inject-defects.mjs']) {
+    assert.ok(!covered(script, manifest.files), `${script} is development-only and must not be published`)
+  }
 })
