@@ -1,0 +1,58 @@
+# The @argszero/dsh-git-hook-guard bundle patch: mount and go.
+#
+# The harness runs its own git commands — working-tree snapshots at every
+# top-level turn start, tree writes, ignore checks. A git command reads the
+# configuration of the repository it runs in, and `GitRunner.run()`
+# (packages/deliverables/workspace-changes/src/git.ts) passes no `-c` flags.
+#
+# Its environment scrub — GIT_CONFIG_COUNT=0 GIT_TERMINAL_PROMPT=0
+# GIT_OPTIONAL_LOCKS=0 LC_ALL=C — cancels *environment-injected* git
+# configuration, which is what its own comment claims. It does nothing about the
+# configuration git reads from the invocation's working directory. A `.git/config`
+# that arrived with a clone or an extracted archive therefore still decides where
+# hooks live:
+#
+#   .git/config      core.hooksPath = .hooks     ← arrives with the project
+#   .hooks/post-index-change                     ← runs with the DSH user's privileges
+#
+# Measured on git 2.50.1 (Apple Git-155), with that configuration in place and an
+# executable `.hooks/post-index-change` in the work tree:
+#
+#   git add --all --ignore-errors              → the hook ran
+#   GIT_CONFIG_COUNT=0 git add …               → the hook ran  (the existing scrub)
+#   git -c core.hooksPath=/dev/null add …      → no marker
+#   GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath … → no marker
+#
+# It is not one command. `git write-tree` runs it, and so does the private-index
+# shape `snapshotTree` uses (GIT_INDEX_FILE plus GIT_OBJECT_DIRECTORY). `rev-parse`,
+# `ls-files --stage` and `check-ignore` do not. `post-index-change` only fires once
+# the repository has a commit. Reported as #9382; the `core.fsmonitor` half of the
+# same boundary is #9217.
+#
+# The repository already carries the answer for its own git calls —
+#
+#   packages/experimental/worktree/src/index.ts:132
+#     [gitCommand, '--no-lazy-fetch', '-c', 'core.hooksPath=/dev/null',
+#      '-c', 'core.fsmonitor=false', ...args]
+#
+# — and the product path is the one place those flags are missing. This plugin adds
+# exactly them, to exactly the invocations that need them, and changes nothing else:
+# no git behaviour is re-implemented, no repository is inspected, no file is
+# written, and git's own configuration precedence does the work.
+#
+# The default scope is the harness's own bookkeeping: a git executable whose
+# explicit environment carries the GIT_CONFIG_COUNT=0 credential-scrub marker. A
+# git command the user asks for goes through the shell tool, whose argv[0] is the
+# shell, so it fails the executable test long before the environment is consulted —
+# the hooks the user installed on purpose keep running. A caller that sets
+# `core.hooksPath` or `core.fsmonitor` itself is respected rather than overridden.
+#
+# `inject` is declared here as well as in the plugin because the entry row is what
+# a profile composes: without the subprocess service the plugin is held, and an
+# entry that activates without one would report a protection it never installed.
+
+- insert:
+    - id: git-hook-guard
+      name: '@argszero/dsh-git-hook-guard'
+      inject:
+        - subprocess
